@@ -1,0 +1,187 @@
+---
+title: "Practical Machine Learning - Project"
+author: "Cooper Carpenter"
+date: "`r Sys.Date()`"
+format: html
+editor: visual
+---
+
+## Introduction 
+
+As the final project for the Practice Machine Learning course, I predicted how a person lifted a barbell via data collected from various accelerometers placed across 6 participants' bodies. Using the "classe" variable as my outcome I ran three different models using a k-fold cross-validation. A validation data set was used to obtain the accuracy and out-of-sample error for the models. Using these results, I applied the top performing model to 20 test cases.
+
+Please note, the url with additional documentation did not work at the time of this project. So detailed information on variables types will not be available in this report.
+
+## Loading Data 
+
+The data and packages required for this project are loaded below. There are 19222 observations and 160 variables in the initial training data.
+
+```{r}
+#| warning: false
+# Loading Necessary Libraries and Checking Location
+library(tidyverse)
+library(magrittr)
+library(caret)
+
+# Loading data 
+training <- read_csv("data/pml-training.csv")
+testing <- read_csv("data/pml-testing.csv")
+
+# checking data sets dimensions 
+dim(training)
+dim(testing)
+```
+
+## Data Cleaning
+
+In the code block below, I clean the data set by removing metadata unrelated to the participants' physical movement. Additionally, I drop variables that are predominantly missing (\>90%) , and highly correlated variables (\> 0.9 correlation). I tested for variables with near zero variance, but none were identified after dropping predominantly missing variables. After cleaning, the training data has 46 variables. A correlation plot of these variables can be found in the appendix.
+
+```{r}
+set.seed(111)
+# removing meta data 
+training <- training[,-c(1:7)]
+
+# removing variables that are predominantly NA (>90%)
+drop_missing <- training %>% 
+  summarise(across(everything(), ~sum(is.na(.))/n())) %>% 
+  pivot_longer(everything(), names_to = "var", values_to = "prop_missing") %>% 
+  filter(prop_missing > .9) %>% pull(var)
+
+training <- training %>%  select(-all_of(drop_missing))
+
+# removing variables with near zero variance - no cases
+drop_nzv <- nearZeroVar(training, names = TRUE)
+
+# removing highly correlated variables 
+cors <- cor(training[,-length(training)])
+
+high_cor <- findCorrelation(cors, 
+                            cutoff = 0.9,
+                            names = TRUE)
+
+training <- training %>% select(-all_of(high_cor))
+
+rm(drop_missing, drop_nzv, high_cor, cors)
+
+dim(training)
+```
+
+## Splitting Data
+
+The cleaned training data is split into a training and validation data set below. The validation data set will be used to determine the models' performance.
+
+```{r}
+# making a validation data set out of training data
+set.seed(123)
+inTrain <- createDataPartition(y = training$classe, p = .7, list = FALSE)
+train <- training[inTrain,]
+valid <- training[-inTrain,]
+rm(inTrain)
+```
+
+## Fitting Models 
+
+I fit three different model types: decision tree, random forest, and gradient boost trees. I predicted the observation's classe for all the models via all remaining variables in the cleaned training data. Each model also used a 3-fold cross-validation set up below.
+
+```{r}
+# setting k-fold cross validation 
+cv <- trainControl(method = "cv", number = 3, verboseIter = FALSE)
+```
+
+### Decision tree 
+
+The code for fitting and predicting data via a decision tree model is below. A plot of the decision is also included.
+
+```{r}
+# fitting
+set.seed(234)
+mod_tree <- train(classe ~ ., 
+                  method = "rpart", 
+                  preProcess = c("center", "scale"),
+                  trControl = cv,
+                  data = train)
+rattle::fancyRpartPlot(mod_tree$finalModel)
+# predicting 
+pred_tree <- predict(mod_tree, valid)
+confusionMatrix(factor(valid$classe), pred_tree)
+
+```
+
+### Random Forest
+
+The code for fitting and predicting data via random forest model.
+
+```{r}
+# fitting
+set.seed(345)
+mod_rf <- train(classe ~ ., 
+                method = "rf", 
+                preProcess = c("center", "scale"),
+                trControl = cv,
+                data = train)
+#plot(mod_rf)
+# prediciting 
+pred_rf <- predict(mod_rf, valid)
+confusionMatrix(factor(valid$classe), pred_rf)
+```
+
+### Gradient Boost
+
+The code for fitting and predicting data via gradient boost trees model.
+
+```{r}
+# fitting
+set.seed(456)
+mod_gbm <- train(classe ~ .,
+                 method = "gbm",
+                 preProcess = c("center", "scale"),
+                 trControl = cv,
+                 verbose = FALSE,
+                 data = train)
+# prediciting
+pred_gbm <- predict(mod_gbm, valid)
+confusionMatrix(factor(valid$classe), pred_gbm)
+
+```
+
+## Model Results 
+
+The accuracy and out-of-sample error rates of the three different models are presented below. Random forest was the top performing model with an accuracy of 0.994 and out-of-sample error rate of 0.006 and will be used to predict the test cases.
+
+```{r}
+mod_results <- tibble(
+  Model = c("Decision Tree", "Random Forest", "Gradient Boost"),
+  Accuracy = c(confusionMatrix(factor(valid$classe), pred_tree)$overall[1],
+               confusionMatrix(factor(valid$classe), pred_rf)$overall[1],
+               confusionMatrix(factor(valid$classe), pred_gbm)$overall[1]),
+  `Out-of-Sample Error` = 1- Accuracy)
+
+# rounding data
+mod_results <- mod_results %>% 
+  mutate(Accuracy = round(Accuracy, 4),
+         `Out-of-Sample Error` = round(`Out-of-Sample Error`, 4))
+
+mod_results
+```
+
+## Predicting Test Cases
+
+Predictions of the 20 test cases using the random forest model are presented below. Classe "B" was predicted for 8 cases while classe "A" was predicted for 7. The remaining 5 cases were predicted for classes "C", "D", and "E". As the testing data set does not have a classe variable, the accuracy of these predictions can not be obtained.
+
+```{r}
+pred_rf_test <- predict(mod_rf, testing)
+
+# list of predictions
+pred_rf_test
+# table of predictions 
+table(pred_rf_test)
+```
+
+## Appendix
+
+The correlation plot for the cleaned training data is displayed below.
+
+```{r}
+cors <- cor(training[,-length(training)])
+corrplot::corrplot(cors, method="color")
+```
